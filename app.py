@@ -1,4 +1,3 @@
-import copy
 import pathlib
 
 import anthropic
@@ -29,11 +28,10 @@ _settings = load_settings()
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 # st.secrets returns immutable AttrDicts; streamlit-authenticator mutates the
-# credentials dict (e.g. to record failed login attempts), so we must deep-copy
+# credentials dict (e.g. to record failed login attempts), so we must convert
 # everything into plain Python dicts first.
-_credentials = copy.deepcopy(dict(st.secrets["credentials"]))
-for _uname, _udata in _credentials["usernames"].items():
-    _credentials["usernames"][_uname] = dict(_udata)
+_secrets_dict = st.secrets.to_dict()
+_credentials = _secrets_dict["credentials"]
 
 auth = stauth.Authenticate(
     _credentials,
