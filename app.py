@@ -6,6 +6,7 @@ import urllib.request
 import anthropic
 import markdown
 import streamlit as st
+import streamlit.components.v1 as components
 import streamlit_authenticator as stauth
 import yaml
 from anthropic.types.text_block import TextBlock
@@ -407,17 +408,14 @@ if st.button("Simplify →", type="primary"):
         simplified_title, body_md, vocab_md = parse_result(raw)
 
         st.divider()
-        if simplified_title:
-            st.subheader(simplified_title)
-        st.markdown(body_md, unsafe_allow_html=True)
-        if vocab_md:
-            st.markdown("**Vocabulary List**")
-            st.markdown(
-                markdown.markdown(
-                    vocab_md, extensions=["tables"], output_format="html"
-                ),
-                unsafe_allow_html=True,
-            )
+        html_bytes = result_to_html(simplified_title, body_md, vocab_md)
+        # Render via components.html so the output is part of the normal page
+        # flow and never creates a competing scroll container.
+        # Height is estimated from content length; 1px = ~2 chars is conservative.
+        estimated_height = max(400, len(html_bytes) // 2)
+        components.html(
+            html_bytes.decode("utf-8"), height=estimated_height, scrolling=False
+        )
 
         st.download_button(
             label="🖨️ Download for printing",
