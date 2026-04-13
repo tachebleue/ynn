@@ -332,7 +332,7 @@ if st.button("Simplify →", type="primary"):
         client = anthropic.Anthropic(api_key=st.secrets["anthropic"]["api_key"])
         with st.spinner("Simplifying…"):
             msg = client.messages.create(
-                model="claude-opus-4-5",
+                model="claude-sonnet-4-6",
                 max_tokens=2048,
                 system=system,
                 messages=[{"role": "user", "content": user_message}],
