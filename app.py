@@ -329,7 +329,7 @@ if st.button("Simplify →", type="primary"):
         if title_input.strip():
             user_message = f"タイトル：{title_input.strip()}\n\n{user_message}"
 
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(api_key=st.secrets["anthropic"]["api_key"])
         with st.spinner("Simplifying…"):
             msg = client.messages.create(
                 model="claude-opus-4-5",
