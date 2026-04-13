@@ -1,19 +1,37 @@
+import pathlib
+
 import anthropic
+import markdown
 import streamlit as st
 import streamlit_authenticator as stauth
 import yaml
 from anthropic.types.text_block import TextBlock
-from yaml.loader import SafeLoader
+
+# ── Settings persistence ───────────────────────────────────────────────────────
+SETTINGS_PATH = pathlib.Path("settings.yaml")
+
+
+def load_settings() -> dict:
+    """Load saved settings from disk, returning an empty dict if none exist yet."""
+    if SETTINGS_PATH.exists():
+        with open(SETTINGS_PATH) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+def save_settings(settings: dict) -> None:
+    with open(SETTINGS_PATH, "w") as f:
+        yaml.dump(settings, f, allow_unicode=True, default_flow_style=False)
+
+
+_settings = load_settings()
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
-with open("credentials.yaml") as f:
-    config = yaml.load(f, Loader=SafeLoader)
-
 auth = stauth.Authenticate(
-    config["credentials"],
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"],
+    dict(st.secrets["credentials"]),
+    st.secrets["cookie"]["name"],
+    st.secrets["cookie"]["key"],
+    st.secrets["cookie"]["expiry_days"],
 )
 
 auth.login()
@@ -29,10 +47,22 @@ elif st.session_state["authentication_status"] is None:
 auth.logout(location="sidebar")
 st.sidebar.write(f"Logged in as **{st.session_state['name']}**")
 
-# ── Default prompt ─────────────────────────────────────────────────────────────
+# ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_SYSTEM = """\
 あなたは日本語教育の専門家です。
-日本語能力試験N4・N3レベルの学習者が読める「やさしい日本語」に変換してください。マークダウンや余計な文字は不要です。
+日本語能力試験N4・N3レベルの学習者が読める「やさしい日本語」に変換してください。
+
+出力は必ず以下の構造にしてください。他の見出しや装飾は使わないでください。
+
+TITLE: （簡単にしたタイトルをここに1行で書く）
+
+（簡単にした本文をここに書く）
+
+## Vocabulary List
+
+| Word | Meaning |
+|------|---------|
+| （語句） | （簡単な意味） |
 
 変換ルール:
 1. {level}レベルの文法・語彙のみを使う（難しい語は簡単な語に置き換える）
@@ -40,10 +70,10 @@ DEFAULT_SYSTEM = """\
 3. 敬体（です・ます調）に統一する
 4. 難しい語句には意味の説明を添える
 5. {furigana_instruction}
-6. 重要な語句リストも出力する（元の語と簡単な意味）
+6. 語句リストには重要な語句を8〜12語入れる。しかし実際優しくした文章に出てくる語句のみ。語句リストでも、漢字にはすべてふりがなをつける（rubyタグを使う）。
 """
 
-FURIGANA_INSTRUCTIONS = {
+DEFAULT_FURIGANA_INSTRUCTIONS = {
     "All kanji": "漢字にはふりがなをつける（HTMLのrubyタグを使う、例えば：<ruby>漢字<rt>かなよみ</rt></ruby>）\
        - 普通の数字（算用数字）にはふりがなをつけない \
        - ただし日付として読む漢字（月・日など）は正しく読む \
@@ -51,14 +81,166 @@ FURIGANA_INSTRUCTIONS = {
          ・「日」が日付の場合は日本語の日付読みに従う（ついたち・ふつか…） \
          ・年（ねん）も同様: 2024<ruby>年<rt>ねん</rt></ruby> \
        - 日付以外の「日」は文脈で判断（「今日」→<ruby>今日<rt>きょう</rt></ruby>）\
-       - 固有名詞（人名・地名など）にもふりがなをつける",
+       - 固有名詞（人名・地名など）にもふりがなをつける \
+       - カタカナにはふりがなをつけない",
     "N2+ only": "Add furigana only to N2-level kanji or harder. Leave common kanji without furigana.",
     "None": "Do not add any furigana.",
 }
 
+# Merge saved overrides on top of the hardcoded defaults
+FURIGANA_INSTRUCTIONS = {
+    **DEFAULT_FURIGANA_INSTRUCTIONS,
+    **_settings.get("furigana_instructions", {}),
+}
+
+HTML_CSS = """\
+body {
+  font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  font-size: 13pt;
+  line-height: 2.8;
+  color: #1a1a1a;
+  max-width: 720px;
+  margin: 2cm auto;
+  padding: 0 1cm;
+}
+ruby {
+  ruby-align: center;
+}
+rt {
+  font-size: 0.5em;
+  color: #555;
+}
+h1 {
+  font-size: 1.5em;
+  font-weight: bold;
+  margin: 0 0 0.6em;
+  line-height: 1.8;
+  border-bottom: 2px solid #1a1a1a;
+  padding-bottom: 0.2em;
+}
+h2 {
+  font-size: 1.15em;
+  font-weight: bold;
+  margin: 1.6em 0 0.4em;
+  line-height: 1.6;
+  color: #333;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 0.15em;
+}
+p {
+  margin: 0.4em 0 1em;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0 1.4em;
+  font-size: 11pt;
+  line-height: 2.2;
+}
+th {
+  background: #2c2c2c;
+  color: #fff;
+  font-weight: bold;
+  padding: 8px 14px;
+  text-align: left;
+  letter-spacing: 0.03em;
+}
+td {
+  padding: 6px 14px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+  vertical-align: middle;
+}
+tr:nth-child(even) td {
+  background: #f7f7f7;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+hr {
+  border: none;
+  border-top: 1px solid #ccc;
+  margin: 1.2em 0;
+}
+strong { font-weight: bold; }
+em     { font-style: italic; }
+@media print {
+  body { margin: 0; padding: 0; max-width: 100%; }
+}
+"""
+
+VOCAB_SECTION_MARKER = "## Vocabulary List"
+
+
+def parse_result(raw: str) -> tuple[str, str, str]:
+    """Return (simplified_title, body, vocab_markdown).
+
+    Expects the model to emit:
+        TITLE: <one-line simplified title>
+        <blank line>
+        <body paragraphs>
+        ## Vocabulary List
+        <markdown table>
+    """
+    # Extract title line
+    title = ""
+    rest = raw
+    for line in raw.splitlines():
+        if line.startswith("TITLE:"):
+            title = line[len("TITLE:") :].strip()
+            # Remove the title line (and any immediately following blank line) from rest
+            rest = raw[raw.index(line) + len(line) :].lstrip("\n")
+            break
+
+    # Split body from vocab section
+    if VOCAB_SECTION_MARKER in rest:
+        body_part, vocab_part = rest.split(VOCAB_SECTION_MARKER, 1)
+    else:
+        body_part = rest
+        vocab_part = ""
+
+    return title, body_part.strip(), vocab_part.strip()
+
+
+def result_to_html(title: str, body_md: str, vocab_md: str) -> bytes:
+    """Wrap the parsed model output in a self-contained HTML file."""
+    body_html = markdown.markdown(body_md, extensions=["tables"], output_format="html")
+
+    title_html = ""
+    if title:
+        title_html = f"<h1>{title}</h1>\n"
+
+    vocab_html = ""
+    if vocab_md:
+        vocab_html = "<h2>Vocabulary List</h2>\n" + markdown.markdown(
+            vocab_md, extensions=["tables"], output_format="html"
+        )
+
+    full_html = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title or "やさしい日本語"}</title>
+  <style>
+{HTML_CSS}
+  </style>
+</head>
+<body>
+{title_html}{body_html}
+{vocab_html}
+</body>
+</html>"""
+    return full_html.encode("utf-8")
+
+
 # ── UI ────────────────────────────────────────────────────────────────────────
 st.title("Japanese article simplifier")
 
+title_input = st.text_input(
+    "Article title",
+    placeholder="記事のタイトルを入力してください…",
+)
 text = st.text_area(
     "Paste Japanese text here",
     height=220,
@@ -73,12 +255,53 @@ with st.expander("Edit system prompt"):
         "Use `{level}` and `{furigana_instruction}` as placeholders — "
         "they are filled in automatically from the dropdowns above."
     )
-    system_template = st.text_area(
-        "System prompt", value=DEFAULT_SYSTEM, height=220, label_visibility="collapsed"
+    system_template = (
+        st.text_area(
+            "System prompt",
+            value=_settings.get("system_prompt") or DEFAULT_SYSTEM,
+            height=280,
+            label_visibility="collapsed",
+        )
+        or DEFAULT_SYSTEM
     )
-    if st.button("Reset to default"):
-        system_template = DEFAULT_SYSTEM
+    col_save_sys, col_reset_sys = st.columns([1, 1])
+    if col_save_sys.button("💾 Save as default", key="save_system"):
+        _settings["system_prompt"] = system_template
+        save_settings(_settings)
+        st.success("System prompt saved.")
+    if col_reset_sys.button("Reset to default", key="reset_system"):
+        _settings.pop("system_prompt", None)
+        save_settings(_settings)
         st.rerun()
+
+with st.expander("Edit furigana instructions"):
+    st.caption(
+        "These are the texts substituted for `{furigana_instruction}` depending on the Furigana dropdown selection above."
+    )
+    edited_furigana: dict[str, str] = {}
+    saved_furi: dict[str, str] = _settings.get("furigana_instructions") or {}
+    for key, default_value in DEFAULT_FURIGANA_INSTRUCTIONS.items():
+        col_label, col_reset = st.columns([6, 1])
+        col_label.markdown(f"**{key}**")
+        if col_reset.button("Reset", key=f"reset_furi_{key}"):
+            saved_furi.pop(key, None)
+            _settings["furigana_instructions"] = saved_furi
+            save_settings(_settings)
+            st.rerun()
+        edited_furigana[key] = (
+            st.text_area(
+                key,
+                value=saved_furi.get(key) or default_value,
+                height=120,
+                label_visibility="collapsed",
+                key=f"furi_{key}",
+            )
+            or default_value
+        )
+    if st.button("💾 Save as default", key="save_furi"):
+        _settings["furigana_instructions"] = edited_furigana
+        save_settings(_settings)
+        st.success("Furigana instructions saved.")
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 if st.button("Simplify →", type="primary"):
@@ -88,7 +311,7 @@ if st.button("Simplify →", type="primary"):
         try:
             system = system_template.format(
                 level=level,
-                furigana_instruction=FURIGANA_INSTRUCTIONS[furi],
+                furigana_instruction=edited_furigana[furi or "None"],
             )
         except KeyError as e:
             st.error(
@@ -96,19 +319,43 @@ if st.button("Simplify →", type="primary"):
             )
             st.stop()
 
+        user_message = text.strip()
+        if title_input.strip():
+            user_message = f"タイトル：{title_input.strip()}\n\n{user_message}"
+
         client = anthropic.Anthropic()
         with st.spinner("Simplifying…"):
             msg = client.messages.create(
                 model="claude-opus-4-5",
                 max_tokens=2048,
                 system=system,
-                messages=[{"role": "user", "content": text}],
+                messages=[{"role": "user", "content": user_message}],
             )
 
         text_blocks = [block for block in msg.content if isinstance(block, TextBlock)]
         if not text_blocks:
             st.error("No text response received from the model.")
             st.stop()
-        result = text_blocks[0].text.strip()
+        raw = text_blocks[0].text.strip()
+
+        simplified_title, body_md, vocab_md = parse_result(raw)
+
         st.divider()
-        st.markdown(result, unsafe_allow_html=True)
+        if simplified_title:
+            st.subheader(simplified_title)
+        st.markdown(body_md, unsafe_allow_html=True)
+        if vocab_md:
+            st.markdown("**Vocabulary List**")
+            st.markdown(
+                markdown.markdown(
+                    vocab_md, extensions=["tables"], output_format="html"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        st.download_button(
+            label="🖨️ Download for printing",
+            data=result_to_html(simplified_title, body_md, vocab_md),
+            file_name="yasashii_nihongo.html",
+            mime="text/html",
+        )

@@ -1,8 +1,0 @@
-furigana_instructions:
-  All kanji: '漢字にはふりがなをつける（HTMLのrubyタグを使う、例えば：<ruby>漢字<rt>かなよみ</rt></ruby>）       -
-    普通の数字（算用数字）にはふりがなをつけない        - ただし日付として読む漢字（月・日など）は正しく読む          ・「月」→「がつ」（例：1<ruby>月<rt>がつ</rt></ruby>）          ・「日」が日付の場合は日本語の日付読みに従う（ついたち・ふつか…）          ・年（ねん）も同様:
-    2024<ruby>年<rt>ねん</rt></ruby>        - 日付以外の「日」は文脈で判断（「今日」→<ruby>今日<rt>きょう</rt></ruby>）       -
-    固有名詞（人名・地名など）にもふりがなをつける        - カタカナにはふりがなをつけない　- タイトルのふりがなは漢字の後に括弧で書く'
-  N2+ only: Add furigana only to N2-level kanji or harder. Leave common kanji without
-    furigana.
-  None: Do not add any furigana.

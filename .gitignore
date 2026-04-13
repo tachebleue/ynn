@@ -1,0 +1,20 @@
+# Streamlit secrets (contains passwords and API keys — never commit)
+.streamlit/secrets.toml
+
+# credentials file (migrated to st.secrets)
+credentials.yaml
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# macOS metadata
+.DS_Store
+
+# Settings are ephemeral on Streamlit Cloud — exclude to avoid confusion
+settings.yaml

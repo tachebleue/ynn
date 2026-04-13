@@ -1,0 +1,5 @@
+anthropic==0.81.0
+streamlit==1.56.0
+streamlit-authenticator==0.4.2
+PyYAML==6.0.2
+Markdown==3.10.2
