@@ -6,7 +6,7 @@ furigana_instructions:
   N2+ only: Add furigana only to N2-level kanji or harder. Leave common kanji without
     furigana.
   None: ふりがなをつけない。
-system_prompt: 'あなたは日本語教育の専門家です。Test
+system_prompt: 'あなたは日本語教育の専門家です。
 
   日本語能力試験N4・N3レベルの学習者が読める「やさしい日本語」に変換してください。
 
