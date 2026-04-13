@@ -1,4 +1,7 @@
-import pathlib
+import base64
+import json
+import urllib.error
+import urllib.request
 
 import anthropic
 import markdown
@@ -7,24 +10,77 @@ import streamlit_authenticator as stauth
 import yaml
 from anthropic.types.text_block import TextBlock
 
-# ── Settings persistence ───────────────────────────────────────────────────────
-SETTINGS_PATH = pathlib.Path("settings.yaml")
+# ── Settings persistence via GitHub API ───────────────────────────────────────
+_GH_TOKEN = st.secrets.get("github", {}).get("token", "")
+_GH_REPO = st.secrets.get("github", {}).get("repo", "")  # e.g. "tachebleue/ynn"
+_GH_PATH = st.secrets.get("github", {}).get("settings_path", "settings.yaml")
+_GH_API = f"https://api.github.com/repos/{_GH_REPO}/contents/{_GH_PATH}"
+
+
+def _gh_request(method: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(
+        _GH_API,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {_GH_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
 
 
 def load_settings() -> dict:
-    """Load saved settings from disk, returning an empty dict if none exist yet."""
-    if SETTINGS_PATH.exists():
-        with open(SETTINGS_PATH) as f:
-            return yaml.safe_load(f) or {}
-    return {}
+    """Fetch settings.yaml from the GitHub repo; return {} if it doesn't exist yet."""
+    if not _GH_TOKEN or not _GH_REPO:
+        return {}
+    try:
+        data = _gh_request("GET")
+        content = base64.b64decode(data["content"]).decode()
+        return yaml.safe_load(content) or {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}
+        raise
 
 
 def save_settings(settings: dict) -> None:
-    with open(SETTINGS_PATH, "w") as f:
-        yaml.dump(settings, f, allow_unicode=True, default_flow_style=False)
+    """Write settings.yaml back to the GitHub repo (create or update)."""
+    if not _GH_TOKEN or not _GH_REPO:
+        st.warning(
+            "GitHub settings not configured — changes won't persist across sessions."
+        )
+        return
+    content = base64.b64encode(
+        yaml.dump(settings, allow_unicode=True, default_flow_style=False).encode()
+    ).decode()
+    # Fetch current SHA so GitHub accepts the update (required for existing files)
+    sha: str | None = None
+    try:
+        existing = _gh_request("GET")
+        sha = existing.get("sha")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+    body: dict = {
+        "message": "chore: update settings.yaml",
+        "content": content,
+    }
+    if sha:
+        body["sha"] = sha
+    _gh_request("PUT", body)
 
 
-_settings = load_settings()
+@st.cache_data(ttl=60)
+def _load_settings_cached() -> dict:
+    return load_settings()
+
+
+_settings = _load_settings_cached()
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 # st.secrets returns immutable AttrDicts; streamlit-authenticator mutates the
@@ -274,10 +330,12 @@ with st.expander("Edit system prompt"):
     if col_save_sys.button("💾 Save as default", key="save_system"):
         _settings["system_prompt"] = system_template
         save_settings(_settings)
+        _load_settings_cached.clear()
         st.success("System prompt saved.")
     if col_reset_sys.button("Reset to default", key="reset_system"):
         _settings.pop("system_prompt", None)
         save_settings(_settings)
+        _load_settings_cached.clear()
         st.rerun()
 
 with st.expander("Edit furigana instructions"):
@@ -293,6 +351,7 @@ with st.expander("Edit furigana instructions"):
             saved_furi.pop(key, None)
             _settings["furigana_instructions"] = saved_furi
             save_settings(_settings)
+            _load_settings_cached.clear()
             st.rerun()
         edited_furigana[key] = (
             st.text_area(
@@ -307,6 +366,7 @@ with st.expander("Edit furigana instructions"):
     if st.button("💾 Save as default", key="save_furi"):
         _settings["furigana_instructions"] = edited_furigana
         save_settings(_settings)
+        _load_settings_cached.clear()
         st.success("Furigana instructions saved.")
 
 # ── Run ───────────────────────────────────────────────────────────────────────
@@ -333,7 +393,7 @@ if st.button("Simplify →", type="primary"):
         with st.spinner("Simplifying…"):
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=2048,
+                max_tokens=4096,
                 system=system,
                 messages=[{"role": "user", "content": user_message}],
             )
