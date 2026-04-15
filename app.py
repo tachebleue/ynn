@@ -394,7 +394,7 @@ if st.button("Simplify →", type="primary"):
         with st.spinner("Simplifying…"):
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=4096,
+                max_tokens=8194,
                 system=system,
                 messages=[{"role": "user", "content": user_message}],
             )
