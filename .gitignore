@@ -3,6 +3,7 @@
 
 # credentials file (migrated to st.secrets)
 credentials.yaml
+create-credentials.py
 
 # Python virtual environment
 .venv/
