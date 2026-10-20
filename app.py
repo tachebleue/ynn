@@ -13,7 +13,7 @@ from anthropic.types.text_block import TextBlock
 
 # ── Settings persistence via GitHub API ───────────────────────────────────────
 _GH_TOKEN = st.secrets.get("github", {}).get("token", "")
-_GH_REPO = st.secrets.get("github", {}).get("repo", "")  # e.g. "tachebleue/ynn"
+_GH_REPO = st.secrets.get("github", {}).get("repo", "")  # e.g. "tachebleue/ynn-settings" (private, separate from the app repo)
 _GH_PATH = st.secrets.get("github", {}).get("settings_path", "settings.yaml")
 _GH_API = f"https://api.github.com/repos/{_GH_REPO}/contents/{_GH_PATH}"
 
@@ -35,53 +35,82 @@ def _gh_request(method: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-def load_settings() -> dict:
-    """Fetch settings.yaml from the GitHub repo; return {} if it doesn't exist yet."""
+def _describe_gh_error(e: Exception) -> str:
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 401:
+            return "GitHub token is invalid or expired (401). Update `[github] token` in the app secrets."
+        if e.code == 403:
+            return "GitHub token lacks permission for the settings repo (403)."
+        return f"GitHub API error {e.code}: {e.reason}"
+    return f"Could not reach GitHub: {e}"
+
+
+def load_settings() -> tuple[dict, str | None]:
+    """Fetch settings.yaml from the GitHub repo.
+
+    Returns (settings, error). settings is {} if the file doesn't exist yet or
+    loading failed; error is a message when loading failed, else None.
+    """
     if not _GH_TOKEN or not _GH_REPO:
-        return {}
+        return {}, None
     try:
         data = _gh_request("GET")
         content = base64.b64decode(data["content"]).decode()
-        return yaml.safe_load(content) or {}
+        return yaml.safe_load(content) or {}, None
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return {}
-        raise
+            return {}, None
+        return {}, _describe_gh_error(e)
+    except urllib.error.URLError as e:
+        return {}, _describe_gh_error(e)
 
 
-def save_settings(settings: dict) -> None:
-    """Write settings.yaml back to the GitHub repo (create or update)."""
+def save_settings(settings: dict) -> bool:
+    """Write settings.yaml back to the GitHub repo (create or update).
+
+    Returns True if the settings were saved.
+    """
     if not _GH_TOKEN or not _GH_REPO:
         st.warning(
             "GitHub settings not configured — changes won't persist across sessions."
         )
-        return
+        return False
+    if _settings_error:
+        # Saved settings couldn't be loaded, so writing now would overwrite them
+        # with defaults plus this one change.
+        st.error(f"Not saved — saved settings couldn't be loaded. {_settings_error}")
+        return False
     content = base64.b64encode(
         yaml.dump(settings, allow_unicode=True, default_flow_style=False).encode()
     ).decode()
     # Fetch current SHA so GitHub accepts the update (required for existing files)
     sha: str | None = None
     try:
-        existing = _gh_request("GET")
-        sha = existing.get("sha")
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise
-    body: dict = {
-        "message": "chore: update settings.yaml",
-        "content": content,
-    }
-    if sha:
-        body["sha"] = sha
-    _gh_request("PUT", body)
+        try:
+            existing = _gh_request("GET")
+            sha = existing.get("sha")
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+        body: dict = {
+            "message": "chore: update settings.yaml",
+            "content": content,
+        }
+        if sha:
+            body["sha"] = sha
+        _gh_request("PUT", body)
+    except urllib.error.URLError as e:  # HTTPError is a subclass
+        st.error(f"Not saved — {_describe_gh_error(e)}")
+        return False
+    return True
 
 
 @st.cache_data(ttl=60)
-def _load_settings_cached() -> dict:
+def _load_settings_cached() -> tuple[dict, str | None]:
     return load_settings()
 
 
-_settings = _load_settings_cached()
+_settings, _settings_error = _load_settings_cached()
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 # st.secrets returns immutable AttrDicts; streamlit-authenticator mutates the
@@ -109,6 +138,11 @@ elif st.session_state["authentication_status"] is None:
 # ── Authenticated ─────────────────────────────────────────────────────────────
 auth.logout(location="sidebar")
 st.sidebar.write(f"Logged in as **{st.session_state['name']}**")
+
+if _settings_error:
+    st.warning(
+        f"Using default settings — saved settings couldn't be loaded. {_settings_error}"
+    )
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_SYSTEM = """\
@@ -330,14 +364,14 @@ with st.expander("Edit system prompt"):
     col_save_sys, col_reset_sys = st.columns([1, 1])
     if col_save_sys.button("💾 Save as default", key="save_system"):
         _settings["system_prompt"] = system_template
-        save_settings(_settings)
-        _load_settings_cached.clear()
-        st.success("System prompt saved.")
+        if save_settings(_settings):
+            _load_settings_cached.clear()
+            st.success("System prompt saved.")
     if col_reset_sys.button("Reset to default", key="reset_system"):
         _settings.pop("system_prompt", None)
-        save_settings(_settings)
-        _load_settings_cached.clear()
-        st.rerun()
+        if save_settings(_settings):
+            _load_settings_cached.clear()
+            st.rerun()
 
 with st.expander("Edit furigana instructions"):
     st.caption(
@@ -351,9 +385,9 @@ with st.expander("Edit furigana instructions"):
         if col_reset.button("Reset", key=f"reset_furi_{key}"):
             saved_furi.pop(key, None)
             _settings["furigana_instructions"] = saved_furi
-            save_settings(_settings)
-            _load_settings_cached.clear()
-            st.rerun()
+            if save_settings(_settings):
+                _load_settings_cached.clear()
+                st.rerun()
         edited_furigana[key] = (
             st.text_area(
                 key,
@@ -366,9 +400,9 @@ with st.expander("Edit furigana instructions"):
         )
     if st.button("💾 Save as default", key="save_furi"):
         _settings["furigana_instructions"] = edited_furigana
-        save_settings(_settings)
-        _load_settings_cached.clear()
-        st.success("Furigana instructions saved.")
+        if save_settings(_settings):
+            _load_settings_cached.clear()
+            st.success("Furigana instructions saved.")
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 if st.button("Simplify →", type="primary"):

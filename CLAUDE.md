@@ -40,9 +40,11 @@ Secrets live in `.streamlit/secrets.toml` (gitignored). Required keys:
 
 - `[cookie]` — `name`, `key`, `expiry_days` for session cookies
 - `[credentials.usernames.<user>]` — `name`, `password` (bcrypt hash)
-- `[github]` — `token` (PAT with `repo` scope), `repo` (`owner/repo`), `settings_path`
+- `[github]` — `token` (fine-grained PAT scoped to the settings repo only, Contents: read/write), `repo` (`tachebleue/ynn-settings`), `settings_path`
 
-`settings.yaml` is the persisted config file stored in GitHub. It is also gitignored locally.
+Settings live in a separate private repo (`tachebleue/ynn-settings`), not in the app repo, so the token cannot modify deployed code. If loading fails (e.g. expired token), the app falls back to default settings, shows a warning, and blocks saving to avoid overwriting the stored settings.
+
+`settings.yaml` is the persisted config file stored in the settings repo. It is gitignored here.
 
 ## Key Design Decisions
 
